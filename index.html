@@ -317,7 +317,21 @@ const EMAIL=/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function lsGet(k){try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}}
 function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
 function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),2800)}
-function speak(text,rate=.9){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang="en-US";u.rate=rate;speechSynthesis.speak(u)}catch(e){toast("Tu navegador no puede reproducir audio")}}
+// Voz en inglés. En iPhone hay que elegir la voz y no cancelar justo antes de hablar.
+let VOICE=null,audioTip=false;
+function pickVoice(){try{const vs=speechSynthesis.getVoices()||[];
+ VOICE=vs.find(v=>/^en[-_]US/i.test(v.lang)&&/samantha|alex|aaron|nicky|google|natural|enhanced|premium/i.test(v.name))||vs.find(v=>/^en[-_]US/i.test(v.lang))||vs.find(v=>/^en/i.test(v.lang))||null}catch(e){}}
+try{if("speechSynthesis" in window){pickVoice();speechSynthesis.addEventListener?.("voiceschanged",pickVoice)}}catch(e){}
+function speak(text,rate=.9){
+ const ss=window.speechSynthesis;
+ if(!ss||!window.SpeechSynthesisUtterance){toast("Este navegador no puede leer en voz alta. Prueba con Safari.");return}
+ if(!VOICE)pickVoice();
+ const go=()=>{try{const u=new SpeechSynthesisUtterance(text);u.lang=VOICE?.lang||"en-US";if(VOICE)u.voice=VOICE;u.rate=rate;u.pitch=1;u.volume=1;
+  u.onerror=e=>{if(!/interrupted|canceled/.test(e.error||""))toast("No se pudo reproducir el audio")};
+  ss.speak(u);if(ss.paused)ss.resume()}catch(e){toast("No se pudo reproducir el audio")}};
+ if(ss.speaking||ss.pending){ss.cancel();setTimeout(go,150)}else go();
+ if(!audioTip){audioTip=true;setTimeout(()=>{if(!ss.speaking)toast("¿No se oye? Sube el volumen y quita el modo silencio del iPhone")},1800)}
+}
 
 const I={
  camera:'<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>',
@@ -910,6 +924,8 @@ function pracView(){
  return`<button class="link" data-act="closeprac">${ic("back",16)} Prácticas</button>
  <div class="row between" style="align-items:flex-start;margin-top:8px"><h1 style="font-size:22px">${esc(p.title)}</h1>${late?'<span class="pill gray">Cerrada</span>':`<span class="pill warn">${ic("cal",13)}${fmt(p.due)}</span>`}</div>
  <p class="lead">${esc(topic(p.topicId)?.title||"")} · ${p.qs.length} preguntas · ${late?"cerró el":"vence el"} ${fmt(p.due)}</p>
+ <button class="btn block" style="margin-top:16px" data-act="testprac" data-id="${p.id}">${ic("clip",18)}Hacer la práctica como estudiante</button>
+ <p class="hint" style="text-align:center">Es una prueba: no se guarda ni cuenta como entrega.</p>
  <h2>Preguntas</h2>
  ${p.qs.map((q,i)=>`<div class="qprev"><span class="tag" style="margin:0">${i+1} · ${TYPE[q.t]}</span>
   <div class="q">${qLabel(q)}${q.t==="listen"?` <button class="icon-btn" style="width:30px;height:30px;display:inline-grid;vertical-align:middle;margin-left:4px;color:var(--brand)" data-act="say" data-v="${esc(q.say)}" aria-label="Escuchar">${ic("vol",15)}</button>`:""}</div>
@@ -1077,7 +1093,7 @@ function vocabView(){
 }
 
 /* ---------- reproductor de prácticas ---------- */
-function startPractice(id){const p=practice(id);if(!p||!p.qs.length)return;P={pid:id,i:0,answers:[],sel:null,picked:[],text:"",checked:false,ok:null,right:"",correct:0,done:false,busy:false};render();window.scrollTo(0,0);
+function startPractice(id,test=false){const p=practice(id);if(!p||!p.qs.length)return;P={test,pid:id,i:0,answers:[],sel:null,picked:[],text:"",checked:false,ok:null,right:"",correct:0,done:false,busy:false};render();window.scrollTo(0,0);
  if(p.qs[0].t==="listen")setTimeout(()=>speak(p.qs[0].say),400)}
 function hasAnswer(){const q=practice(P.pid).qs[P.i];if(q.t==="mc"||q.t==="listen")return P.sel!=null;if(q.t==="order")return P.picked.length>0;return P.text.trim().length>0}
 function curAnswer(q){if(q.t==="mc"||q.t==="listen")return q.opts[P.sel];if(q.t==="order")return P.picked.map(i=>q.words[i]).join(" ");return P.text.trim()}
@@ -1086,9 +1102,11 @@ function playerView(){
  if(P.done){const auto=p.qs.filter(isAuto).length,pct=auto?P.correct/auto:1,C=2*Math.PI*64;
   return`<div class="player"><div class="done-screen"><div class="ring"><svg width="150" height="150"><circle cx="75" cy="75" r="64" stroke="#EFF6FF" stroke-width="14" fill="none"/><circle cx="75" cy="75" r="64" stroke="url(#g)" stroke-width="14" fill="none" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C*(1-pct)}" style="transition:stroke-dashoffset 1s"/><defs><linearGradient id="g"><stop offset="0" stop-color="#1E40AF"/><stop offset="1" stop-color="#2563EB"/></linearGradient></defs></svg><b>${P.correct}/${auto}</b></div>
   <h1>${pct>=.8?"¡Excelente!":pct>=.5?"¡Buen trabajo!":"¡Sigue practicando!"}</h1>
-  <p class="lead">Acertaste ${P.correct} de ${auto} preguntas automáticas${p.qs.some(q=>q.t==="write")?". Tu respuesta escrita la revisará tu profe.":"."}</p>
+  ${P.test?`<p class="lead">Acertaste ${P.correct} de ${auto} preguntas automáticas.</p><p class="hint" style="margin-top:10px">Modo prueba: no se guardó ninguna entrega.</p>
+  <button class="btn ghost block" style="margin-top:22px" data-act="testagain">${ic("refresh",18)}Hacerla otra vez</button><button class="btn block" style="margin-top:10px" data-act="finish">Volver a la práctica</button></div></div>`
+  :`<p class="lead">Acertaste ${P.correct} de ${auto} preguntas automáticas${p.qs.some(q=>q.t==="write")?". Tu respuesta escrita la revisará tu profe.":"."}</p>
   <div class="row" style="justify-content:center;gap:10px;margin-top:18px"><span class="pill info">${ic("star",13)} +${P.correct*10} puntos</span><span class="pill warn">${ic("flame",13)} Racha ${S.streak} ${S.streak===1?"día":"días"}</span></div>
-  <button class="btn block" style="margin-top:28px" data-act="finish">Volver al inicio</button></div></div>`}
+  <button class="btn block" style="margin-top:28px" data-act="finish">Volver al inicio</button></div></div>`}`}
  const q=p.qs[P.i];
  let body="";
  if(q.t==="mc"||q.t==="listen"){
@@ -1108,7 +1126,7 @@ function playerView(){
  let foot;
  if(P.checked)foot=`<div class="pfoot ${P.ok?"ok":"bad"}"><div class="in"><div class="fb">${ic(P.ok?"check":"x",26,3)}<div>${P.ok?"¡Correcto! +10":"Casi…"}${P.ok?"":`<small>Respuesta correcta: ${esc(P.right)}</small>`}</div></div><button class="btn block ${P.ok?"okb":"badb"}" data-act="next" ${P.busy?"disabled":""}>${P.busy?"Entregando…":last?"Terminar y entregar":"Continuar"}</button></div></div>`;
  else foot=`<div class="pfoot"><div class="in"><button class="btn block" id="checkBtn" data-act="${q.t==="write"?"savew":"check"}" ${hasAnswer()&&!P.busy?"":"disabled"}>${P.busy?"Un momento…":q.t==="write"?(last?"Guardar y entregar":"Guardar respuesta"):"Comprobar"}</button></div></div>`;
- return`<div class="player"><div class="ptop"><button class="icon-btn" data-act="quit" aria-label="Salir">${ic("x")}</button><div class="bar"><i style="width:${P.i/n*100}%"></i></div><span class="small muted" style="font-weight:700">${P.i+1}/${n}</span></div>
+ return`<div class="player"><div class="ptop"><button class="icon-btn" data-act="quit" aria-label="Salir">${ic("x")}</button><div class="bar"><i style="width:${P.i/n*100}%"></i></div><span class="small muted" style="font-weight:700">${P.i+1}/${n}</span></div>${P.test?'<div class="pill info" style="margin-top:12px">Modo prueba · no se guarda</div>':""}
  <div class="qtype">${ic(TYPE_IC[q.t],14)}${TYPE[q.t]}</div>${body}</div>${foot}`;
 }
 function blank(t){return esc(t).replace("___",'<span class="blank">&nbsp;</span>')}
@@ -1149,7 +1167,7 @@ function setUntil(id,until){const st=student(id);run(()=>api.setAccess(id,until)
 async function doCheck(){
  if(P.busy)return;const q=practice(P.pid).qs[P.i],ans=curAnswer(q);
  P.busy=true;render();
- try{const r=await api.check(P.pid,P.i,q,ans);P.answers[P.i]=ans;P.ok=!!r.ok;P.right=r.a;P.checked=true;if(P.ok)P.correct++}
+ try{const r=P.test?{ok:correct(q,ans),a:q.a}:await api.check(P.pid,P.i,q,ans);P.answers[P.i]=ans;P.ok=!!r.ok;P.right=r.a;P.checked=true;if(P.ok)P.correct++}
  catch(e){toast(traducir(e.message))}
  P.busy=false;render();
  if(P.checked&&!P.ok)document.querySelector(".player")?.classList.add("shake");
@@ -1158,7 +1176,7 @@ async function nextQ(){
  const p=practice(P.pid);
  if(P.i+1>=p.qs.length){
   if(P.busy)return;P.busy=true;render();
-  try{await api.submit(p.id,p.qs.map((_,i)=>P.answers[i]??""),P.correct);P.done=true;P.busy=false;render();window.scrollTo(0,0);confetti()}
+  try{if(!P.test)await api.submit(p.id,p.qs.map((_,i)=>P.answers[i]??""),P.correct);P.done=true;P.busy=false;render();window.scrollTo(0,0);confetti()}
   catch(e){P.busy=false;render();toast(traducir(e.message))}
   return;
  }
@@ -1227,6 +1245,8 @@ document.addEventListener("click",e=>{
  case"copy":{const code=cls().code;try{navigator.clipboard.writeText(code).then(()=>toast("Código copiado"),()=>toast("Código: "+code))}catch(err){toast("Código: "+code)}break}
  /* estudiante */
  case"start":startPractice(id);break;
+ case"testprac":startPractice(id,true);break;
+ case"testagain":startPractice(P.pid,true);break;
  case"say":speak(v);break;
  case"sayslow":speak(v,.55);break;
  case"flip":V.flip=!V.flip;render();break;
@@ -1238,7 +1258,7 @@ document.addEventListener("click",e=>{
  case"check":doCheck();break;
  case"savew":{const q=practice(P.pid).qs[P.i];P.answers[P.i]=curAnswer(q);nextQ();break}
  case"next":nextQ();break;
- case"finish":P=null;V.s="inicio";go();break;
+ case"finish":{const t=P?.test;P=null;if(!t)V.s="inicio";go();break}
  }
 });
 document.addEventListener("input",e=>{
