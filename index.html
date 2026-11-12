@@ -214,6 +214,8 @@ const CONFIG={
                       // true  = la app usa la API de Claude (requiere la función "ia" y saldo)
 };
 const IA=!!CONFIG.IA_AUTOMATICA;
+// Solo en modo demo: quiénes entran como profesor (en la versión real lo decide la tabla profesores_autorizados)
+const DEMO_PROFES=["msirias90@gmail.com","criscc_95@hotmail.com"];
 const DEMO=!CONFIG.SUPABASE_URL||!CONFIG.SUPABASE_KEY;
 let sb=null;
 if(!DEMO){try{sb=window.supabase.createClient(CONFIG.SUPABASE_URL,CONFIG.SUPABASE_KEY)}catch(e){console.error(e)}}
@@ -511,6 +513,10 @@ function access(st){
 /* ============ conexión: modo demo y modo Supabase ============ */
 function chk(r){if(r.error)throw new Error(traducir(r.error.message||String(r.error)));return r.data}
 function traducir(m){
+ if(/invalid login credentials/i.test(m))return"Correo o contraseña incorrectos.";
+ if(/password should be|weak password/i.test(m))return"La contraseña debe tener al menos 8 caracteres.";
+ if(/same.*password|different from the old/i.test(m))return"La contraseña nueva tiene que ser distinta a la actual.";
+ if(/email not confirmed/i.test(m))return"Ese correo no está confirmado. Revisa la guía: hay que crear el usuario con Auto Confirm.";
  if(/invalid|expired/i.test(m)&&/token|otp/i.test(m))return"El código no es correcto o ya venció.";
  if(/security purposes|rate limit/i.test(m))return"Espera un minuto antes de pedir otro código.";
  if(/Failed to fetch|NetworkError|Load failed/i.test(m))return"No hay conexión. Revisa tu internet.";
@@ -537,6 +543,9 @@ const byNew=(a,b)=>b.created-a.created;
 
 const demoApi={
  async init(){const d=lsGet(DEMO_KEY);if(d&&d.classes)S=d;else demoSeed();ME=S.role==="estudiante"?"s1":"t1"},
+ async loginType(email){await wait(200);return DEMO_PROFES.includes(email)?"contrasena":"codigo"},
+ async signInPassword(email,pass){await wait(300);if(pass.length<4)throw new Error("Correo o contraseña incorrectos.");return{hasProfile:false}},
+ async changePassword(){await wait(300)},
  async sendCode(){await wait(400)},
  async verify(){await wait(300);return{hasProfile:false}},
  async createProfile({role,name,email,code}){
@@ -599,6 +608,9 @@ const realApi={
   }
   if(V.ci>=classes().length)V.ci=0;
  },
+ async loginType(email){return chk(await sb.rpc("tipo_ingreso",{p_email:email}))},
+ async signInPassword(email,password){chk(await sb.auth.signInWithPassword({email,password}));await this.load();return{hasProfile:!!S.user}},
+ async changePassword(password){chk(await sb.auth.updateUser({password}))},
  async sendCode(email){chk(await sb.auth.signInWithOtp({email,options:{shouldCreateUser:true}}))},
  async verify(email,token){chk(await sb.auth.verifyOtp({email,token,type:"email"}));await this.load();return{hasProfile:!!S.user}},
  async createProfile({role,name,email,code}){
@@ -647,6 +659,7 @@ function render(){
  if(V.offline){r.innerHTML=`<div class="login" style="text-align:center"><div class="empty"><div class="ei">${ic("wifi",26)}</div><h1 style="font-size:22px;color:var(--ink)">No pudimos conectar</h1><p class="lead">Tu sesión sigue guardada. Revisa tu internet y vuelve a intentar.</p></div><button class="btn block" data-act="retry">Reintentar</button></div>`;return}
  if(!S.user){r.innerHTML=loginView();return}
  if(P){r.innerHTML=playerView();return}
+ if(V.pwd){r.innerHTML=header()+`<main>${pwdView()}</main>`;return}
  if(!cls()||V.newClass){r.innerHTML=header()+`<main>${S.role==="profesor"?createClassView():joinView()}${footLinks()}</main>`;return}
  r.innerHTML=header()+`<main>${S.role==="profesor"?teacherView():studentView()}${footLinks()}</main>`+nav();
 }
@@ -665,7 +678,7 @@ function nav(){
  const cur=S.role==="profesor"?V.t:V.s;
  return`<nav class="tabs"><div class="in">${T.map(([k,l,i,b])=>`<button class="${cur===k?"on":""}" data-act="tab" data-v="${k}">${ic(i,22)}${l}${b?`<span class="badge">${b}</span>`:""}</button>`).join("")}</div></nav>`;
 }
-function footLinks(){return`<div class="foot-links"><button data-act="logout">Cerrar sesión</button>${DEMO?'<button data-act="reset">Reiniciar demo</button>':""}</div>${DEMO?'<p class="muted small" style="text-align:center">Modo demo · los datos se guardan solo en este navegador</p>':`<p class="muted small" style="text-align:center">${esc(S.user.email)}</p>`}`}
+function footLinks(){return`<div class="foot-links"><button data-act="logout">Cerrar sesión</button>${S.role==="profesor"?'<button data-act="pwd">Cambiar contraseña</button>':""}${DEMO?'<button data-act="reset">Reiniciar demo</button>':""}</div>${DEMO?'<p class="muted small" style="text-align:center">Modo demo · los datos se guardan solo en este navegador</p>':`<p class="muted small" style="text-align:center">${esc(S.user.email)}</p>`}`}
 
 /* ---------- login ---------- */
 function loginView(){
@@ -673,8 +686,14 @@ function loginView(){
  if(L.step===1)body=`<h1>Bienvenido a Aula Viva</h1><p class="lead">Clases de inglés con prácticas creadas por IA a partir de tu materia.</p>
   <form data-form="email"><label class="lb" for="em">Tu correo electrónico</label>
   <input class="f" id="em" type="email" inputmode="email" autocomplete="email" placeholder="nombre@correo.com" value="${esc(L.email)}">
-  <p class="hint">Te enviaremos un código para entrar. No necesitas contraseña.</p><div class="err">${esc(L.err)}</div>
-  <button class="btn block" type="submit" ${dis}>${L.busy?"Enviando…":"Enviar código"}</button></form>`;
+  <p class="hint">Estudiantes: te enviaremos un código al correo. Profesores: entran con su contraseña.</p><div class="err">${esc(L.err)}</div>
+  <button class="btn block" type="submit" ${dis}>${L.busy?"Un momento…":"Continuar"}</button></form>`;
+ if(L.step==="pass")body=`<h1>Hola, profe</h1><p class="lead">Escribe la contraseña de <b>${esc(L.email)}</b>.</p>
+  <form data-form="pass"><label class="lb" for="pw">Contraseña</label>
+  <input class="f" id="pw" type="password" autocomplete="current-password" placeholder="Tu contraseña">
+  ${DEMO?'<p class="hint">En el demo cualquier contraseña de 4 letras o más funciona.</p>':""}<div class="err">${esc(L.err)}</div>
+  <button class="btn block" type="submit" ${dis}>${L.busy?"Entrando…":"Entrar"}</button></form>
+  <button class="link" style="margin-top:12px" data-act="lback">Cambiar correo</button>`;
  if(L.step===2)body=`<h1>Revisa tu correo</h1><p class="lead">Enviamos un código a <b>${esc(L.email)}</b>. Si no lo ves, revisa la carpeta de spam.</p>
   <form data-form="code"><label class="lb" for="cd">Código</label>
   <input class="f otp" id="cd" inputmode="numeric" maxlength="8" autocomplete="one-time-code" placeholder="••••••">
@@ -682,13 +701,19 @@ function loginView(){
   <button class="btn block" type="submit" ${dis}>${L.busy?"Revisando…":"Entrar"}</button></form>
   <div class="row between" style="margin-top:12px"><button class="link" data-act="lback">Cambiar correo</button><button class="link" data-act="resend">Reenviar código</button></div>`;
  if(L.step===3)body=`<h1>Cuéntanos de ti</h1><p class="lead">Solo la primera vez.</p>
-  <form data-form="profile"><label class="lb">Soy…</label>
-  <div class="rolepick"><button type="button" class="${L.role==="profesor"?"on":""}" data-act="lrole" data-v="profesor"><span class="ico">${ic("book")}</span>Profesor<small>Creo clases y prácticas</small></button>
-  <button type="button" class="${L.role==="estudiante"?"on":""}" data-act="lrole" data-v="estudiante"><span class="ico">${ic("star")}</span>Estudiante<small>Practico y aprendo</small></button></div>
+  <form data-form="profile"><div class="card soft row" style="margin-top:16px"><span class="ico" style="width:36px;height:36px;border-radius:11px;background:#fff;display:grid;place-items:center;color:var(--brand)">${ic(L.role==="profesor"?"book":"star")}</span><div><b>Entras como ${L.role==="profesor"?"profesor":"estudiante"}</b><div class="small muted">${esc(L.email||S.email||"")}</div></div></div>
   <label class="lb" for="nm">Tu nombre</label><input class="f" id="nm" autocomplete="name" placeholder="Ej: María Rodríguez" value="${esc(L.name)}">
   ${L.role==="estudiante"?`<label class="lb" for="cc">Código de la clase</label><input class="f" id="cc" placeholder="Ej: A1-7K2Q" value="${esc(L.code||(DEMO?"A1-7K2Q":""))}" style="text-transform:uppercase" autocapitalize="characters"><p class="hint">Te lo da tu profesor. Puedes dejarlo para después.</p>`:""}
   <div class="err">${esc(L.err)}</div><button class="btn block" type="submit" ${dis}>${L.busy?"Guardando…":"Empezar"}</button></form>`;
  return`<div class="login"><div class="logo">A</div>${body}</div>`;
+}
+
+function pwdView(){
+ return`<button class="link" data-act="pwdclose">${ic("back",16)} Volver</button>
+ <h1 style="margin-top:8px">Cambiar contraseña</h1><p class="lead">Usa al menos 8 caracteres.</p>
+ <form data-form="pwd"><label class="lb" for="np">Contraseña nueva</label><input class="f" id="np" type="password" autocomplete="new-password">
+ <label class="lb" for="np2">Repítela</label><input class="f" id="np2" type="password" autocomplete="new-password">
+ <button class="btn block" style="margin-top:20px" type="submit">Guardar contraseña</button></form>`;
 }
 
 /* ---------- crear / unirse a clase ---------- */
@@ -1020,8 +1045,9 @@ document.addEventListener("click",e=>{
  case"role":S.role=v;ME=v==="estudiante"?"s1":"t1";P=null;V.review=null;V.gen=null;V.ci=0;V.newClass=false;go();break;
  case"tab":if(S.role==="profesor"){V.t=v;V.review=null;V.gen=null}else{V.s=v;V.flip=false}go();break;
  case"lback":L.step=1;L.err="";render();break;
+ case"pwd":V.pwd=true;go();break;
+ case"pwdclose":V.pwd=false;go();break;
  case"resend":L.busy=true;render();api.sendCode(L.email).then(()=>toast("Te enviamos otro código"),err=>toast(traducir(err.message))).finally(()=>{L.busy=false;render()});break;
- case"lrole":L.role=v;L.name=$("#nm")?.value||L.name;render();break;
  case"logout":run(async()=>{await api.logout();P=null;resetLogin();L.role=S.role||"profesor";V.ci=0;V.newClass=false});break;
  case"reset":try{localStorage.removeItem(DEMO_KEY)}catch(err){}demoSeed();KNOWN=[];lsSet("aula-viva-vocab",[]);P=null;V={...V,t:"materia",s:"inicio",ci:0,review:null,gen:null,photos:[],files:[],reading:-1,newTopic:null,card:0,flip:false,newClass:false};resetLogin();go();toast("Demo reiniciada");break;
  case"cancelnew":V.newClass=false;go();break;
@@ -1102,8 +1128,17 @@ document.addEventListener("submit",async e=>{
  e.preventDefault();const f=e.target.dataset.form;
  if(f==="email"){const em=$("#em").value.trim().toLowerCase();if(!EMAIL.test(em)){L.err="Escribe un correo válido.";render();return}
   L.email=em;L.err="";L.busy=true;render();
-  try{await api.sendCode(em);L.step=2}catch(err){L.err=traducir(err.message)}
-  L.busy=false;render();setTimeout(()=>$("#cd")?.focus(),50)}
+  try{const t=await api.loginType(em);
+   if(t==="contrasena"){L.role="profesor";L.step="pass"}
+   else{L.role="estudiante";await api.sendCode(em);L.step=2}}
+  catch(err){L.err=traducir(err.message)}
+  L.busy=false;render();setTimeout(()=>($("#cd")||$("#pw"))?.focus(),50)}
+ if(f==="pass"){const pw=$("#pw").value;if(!pw){L.err="Escribe tu contraseña.";render();return}
+  L.err="";L.busy=true;render();
+  try{const r=await api.signInPassword(L.email,pw);if(r.hasProfile){resetLogin();V.ci=0;go();return}L.step=3}catch(err){L.err=traducir(err.message)}
+  L.busy=false;render()}
+ if(f==="pwd"){const a=$("#np").value,b=$("#np2").value;if(a.length<8){toast("Usa al menos 8 caracteres");return}if(a!==b){toast("Las contraseñas no coinciden");return}
+  run(async()=>{await api.changePassword(a);V.pwd=false},"Contraseña cambiada")}
  if(f==="code"){const c=$("#cd").value.replace(/\D/g,"");if(c.length<6){L.err="Escribe el código completo.";render();return}
   L.err="";L.busy=true;render();
   try{const r=await api.verify(L.email,c);if(r.hasProfile){resetLogin();V.ci=0;go();return}L.step=3}catch(err){L.err=traducir(err.message)}
@@ -1125,7 +1160,7 @@ async function boot(){
  try{
   if(!DEMO&&!sb)throw new Error("No se pudo cargar Supabase");
   await api.init();
-  if(!DEMO&&S.needProfile){L.step=3;L.email=S.email}
+  if(!DEMO&&S.needProfile){L.step=3;L.email=S.email;try{L.role=(await api.loginType(S.email))==="contrasena"?"profesor":"estudiante"}catch(e){L.role="estudiante"}}
   if(!DEMO)sb.auth.onAuthStateChange((ev)=>{if(ev==="SIGNED_OUT"&&S.user){S.user=null;render()}});
  }catch(e){console.error(e);if(!DEMO){V.loading=false;V.offline=true;render();return}}
  V.loading=false;render();
