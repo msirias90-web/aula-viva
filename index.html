@@ -646,6 +646,8 @@ const demoApi={
   const k=Object.keys(LIB).find(x=>LIB[x].title===r.titulo);t.key=k||null;cls().topics.unshift(t);save();return t.id},
  async generate(G){await wait(1500);return genQs(topic(G.topicId).key||"present",G.n,G.types)},
  async regenOne(G,q){await wait(500);return makeQ(topic(G.topicId).key||"present",q.t)},
+ async setDue(id,due){practice(id).due=due;save()},
+ async deletePractice(id){const c=cls();c.practices=c.practices.filter(p=>p.id!==id);S.subs=S.subs.filter(s=>s.pid!==id);save()},
  async assign(G){cls().practices.unshift({id:uid(),topicId:G.topicId,title:G.title||"Práctica",qs:G.preview,due:now()+G.due*DAY,created:now()});save()},
  async reviewAI(s){const p=practice(s.pid),wi=p.qs.findIndex(q=>q.t==="write");await wait(700);s.ai=aiReview(s.answers[wi],topic(p.topicId)?.key);save()},
  async approve(s,grade,comment){Object.assign(s,{grade,comment,status:"revisada"});save()},
@@ -726,6 +728,8 @@ const realApi={
  temaPayload(G){const t=topic(G.topicId);return{titulo:t.title,resumen:t.summary,puntos:t.points,vocabulario:t.vocab,ejemplos:t.examples}},
  async generate(G){const r=await fnIA({accion:"generar_practica",clase_id:cls().id,tema:this.temaPayload(G),n:G.n,tipos:G.types,nivel:G.level,inventar:G.invent});return r.preguntas},
  async regenOne(G,q){const r=await fnIA({accion:"generar_practica",clase_id:cls().id,tema:this.temaPayload(G),n:1,tipos:[q.t],nivel:G.level,inventar:G.invent,evitar:G.preview.map(x=>x.q||x.a||x.say).filter(Boolean)});return r.preguntas[0]},
+ async setDue(id,due){chk(await sb.from("practicas").update({vence:iso(due)}).eq("id",id));await this.load()},
+ async deletePractice(id){chk(await sb.from("practicas").delete().eq("id",id));await this.load()},
  async assign(G){chk(await sb.from("practicas").insert({clase_id:cls().id,tema_id:G.topicId,titulo:G.title||"Práctica",preguntas:G.preview,vence:iso(now()+G.due*DAY)}));await this.load()},
  async reviewAI(s){
   const p=practice(s.pid),wi=p.qs.findIndex(q=>q.t==="write");
@@ -847,7 +851,7 @@ function joinView(){
 /* ---------- profesor ---------- */
 function teacherView(){
  if(V.t==="materia")return materiaView();
- if(V.t==="practicas")return V.gen?genView():practicasView();
+ if(V.t==="practicas")return V.gen?genView():V.prac&&practice(V.prac)?pracView():practicasView();
  if(V.t==="revisar")return V.review?reviewView():revisarView();
  return alumnosView();
 }
@@ -895,10 +899,28 @@ function practicasView(){
  ${c.topics.length?"":'<p class="hint" style="text-align:center">Primero sube materia en la pestaña Materia.</p>'}
  <h2>Asignadas</h2>
  ${c.practices.length?c.practices.map(p=>{const subs=S.subs.filter(s=>s.pid===p.id),pend=subs.filter(s=>s.status==="pendiente").length,late=p.due<now();
-  return`<div class="card"><div class="row between" style="align-items:flex-start"><h3>${esc(p.title)}</h3>${late?'<span class="pill gray">Cerrada</span>':`<span class="pill warn">${ic("cal",13)}${fmt(p.due)}</span>`}</div>
+  return`<button class="card" style="display:block;width:100%;text-align:left;font:inherit;color:inherit" data-act="openprac" data-id="${p.id}"><div class="row between" style="align-items:flex-start"><h3>${esc(p.title)}</h3>${late?'<span class="pill gray">Cerrada</span>':`<span class="pill warn">${ic("cal",13)}${fmt(p.due)}</span>`}</div>
   <p class="muted small" style="margin:4px 0 10px">${esc(topic(p.topicId)?.title||"")} · ${p.qs.length} preguntas</p>
   <div>${uniq(p.qs.map(q=>q.t)).map(t=>`<span class="tag">${TYPE[t]}</span>`).join("")}</div>
-  <div class="row between" style="margin-top:10px"><span class="small"><b>${subs.length}</b> de ${c.students.length} entregadas</span>${pend?`<button class="link" data-act="tab" data-v="revisar">${pend} por revisar →</button>`:""}</div></div>`}).join(""):`<div class="empty">Aún no has asignado prácticas.</div>`}`;
+  <div class="row between" style="margin-top:10px"><span class="small"><b>${subs.length}</b> de ${c.students.length} entregadas</span>${pend?`<span class="pill warn">${pend} por revisar</span>`:`<span class="link" style="font-size:13px">Ver preguntas →</span>`}</div></button>`}).join(""):`<div class="empty">Aún no has asignado prácticas.</div>`}`;
+}
+function pracView(){
+ const c=cls(),p=practice(V.prac),late=p.due<now(),subs=S.subs.filter(s=>s.pid===p.id);
+ const ans=q=>q.t==="write"?'<div class="small muted">Respuesta abierta · la revisas tú</div>':`<div class="a">✓ ${esc(q.a)}</div>`;
+ return`<button class="link" data-act="closeprac">${ic("back",16)} Prácticas</button>
+ <div class="row between" style="align-items:flex-start;margin-top:8px"><h1 style="font-size:22px">${esc(p.title)}</h1>${late?'<span class="pill gray">Cerrada</span>':`<span class="pill warn">${ic("cal",13)}${fmt(p.due)}</span>`}</div>
+ <p class="lead">${esc(topic(p.topicId)?.title||"")} · ${p.qs.length} preguntas · ${late?"cerró el":"vence el"} ${fmt(p.due)}</p>
+ <h2>Preguntas</h2>
+ ${p.qs.map((q,i)=>`<div class="qprev"><span class="tag" style="margin:0">${i+1} · ${TYPE[q.t]}</span>
+  <div class="q">${qLabel(q)}${q.t==="listen"?` <button class="icon-btn" style="width:30px;height:30px;display:inline-grid;vertical-align:middle;margin-left:4px;color:var(--brand)" data-act="say" data-v="${esc(q.say)}" aria-label="Escuchar">${ic("vol",15)}</button>`:""}</div>
+  ${ans(q)}${q.opts&&q.t!=="write"?`<div class="small muted">Opciones: ${q.opts.map(esc).join(" · ")}</div>`:""}</div>`).join("")}
+ <h2>Entregas <span class="pill gray">${subs.length} de ${c.students.length}</span></h2>
+ ${subs.length?subs.map(s=>{const st=student(s.sid)||{name:"Estudiante"};return`<button class="card prac" style="width:100%;text-align:left;display:flex" data-act="open" data-id="${s.id}">${avatar(st.name,36)}<div style="flex:1"><b>${esc(st.name)}</b><div class="muted small">Entregó ${fmt(s.at)}</div></div>${s.status==="pendiente"?'<span class="pill warn">Revisar</span>':`<span class="pill ok">${s.grade}</span>`}</button>`}).join(""):'<p class="muted small">Nadie la ha entregado todavía.</p>'}
+ <h2>${late?"Volver a abrirla":"Extender la fecha"}</h2>
+ <div class="chips">${[[2,"+2 días"],[7,"+1 semana"],[14,"+2 semanas"]].map(([d,l])=>`<button class="chip" data-act="pdue" data-v="${d}">${l}</button>`).join("")}</div>
+ <p class="hint">Se cuenta desde ${late?"hoy":"la fecha actual de entrega"}.</p>
+ <button class="btn line block" style="margin-top:26px;color:var(--bad)" data-act="pdel">${ic("trash",18)}${V.confirmDel===p.id?"Toca otra vez para eliminarla":"Eliminar práctica"}</button>
+ ${V.confirmDel===p.id?`<p class="hint" style="text-align:center;color:var(--bad)">Se borran también las ${subs.length} entregas.</p>`:""}`;
 }
 function qLabel(q){return q.t==="order"?"Ordena: "+esc(q.words.join(" / ")):q.t==="listen"?"Escuchar: “"+esc(q.say)+"”":esc(q.q)}
 function genView(){
@@ -1115,7 +1137,7 @@ async function generate(){
  G.loading=false;render();window.scrollTo(0,0);
 }
 async function openReview(id){
- V.review=id;V.draft=null;V.dgrade=null;go();
+ V.t="revisar";V.prac=null;V.review=id;V.draft=null;V.dgrade=null;go();
  const s=S.subs.find(x=>x.id===id),p=practice(s.pid);
  if(IA&&s.status==="pendiente"&&!s.ai&&p.qs.some(q=>q.t==="write")){
   V.aiLoading=true;render();
@@ -1153,7 +1175,7 @@ document.addEventListener("click",e=>{
  case"retry":boot();break;
  case"refresh":run(()=>api.load());break;
  case"role":S.role=v;ME=v==="estudiante"?"s1":"t1";P=null;V.review=null;V.gen=null;V.ci=0;V.newClass=false;go();break;
- case"tab":if(S.role==="profesor"){V.t=v;V.review=null;V.gen=null}else{V.s=v;V.flip=false}go();break;
+ case"tab":if(S.role==="profesor"){V.t=v;V.review=null;V.gen=null;V.prac=null}else{V.s=v;V.flip=false}go();break;
  case"lback":L.step=1;L.err="";render();break;
  case"pwd":V.pwd=true;V.draftBrand=undefined;P=null;go();break;
  case"pwdclose":V.pwd=false;V.draftBrand=undefined;go();break;
@@ -1177,6 +1199,11 @@ document.addEventListener("click",e=>{
  case"clearph":V.photos=[];V.files=[];render();break;
  case"genfrom":if(!cls().topics.length)break;V.t="practicas";V.gen={topicId:id||cls().topics[0].id,types:["mc","fill","order","listen","write"],n:8,level:"Media",invent:true,due:3,preview:null,loading:false,title:"",regen:-1};go();break;
  case"genclose":V.gen=null;go();break;
+ case"openprac":V.prac=id;V.confirmDel=null;go();break;
+ case"closeprac":V.prac=null;V.confirmDel=null;go();break;
+ case"pdue":{const p=practice(V.prac),base=Math.max(now(),p.due),d=base+(+v)*DAY;run(()=>api.setDue(p.id,d),"Nueva fecha: "+fmt(d));break}
+ case"pdel":if(V.confirmDel!==V.prac){V.confirmDel=V.prac;render();break}
+  run(async()=>{await api.deletePractice(V.prac);V.prac=null;V.confirmDel=null},"Práctica eliminada");break;
  case"genback":V.gen.preview=null;go();break;
  case"gtype":{const T=V.gen.types;V.gen.types=T.includes(v)?T.filter(x=>x!==v):[...T,v];render();break}
  case"gn":V.gen.n=+v;render();break;
