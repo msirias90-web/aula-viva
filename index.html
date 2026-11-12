@@ -605,7 +605,7 @@ function access(st){
 }
 
 /* ============ conexión: modo demo y modo Supabase ============ */
-function chk(r){if(r.error)throw new Error(traducir(r.error.message||String(r.error)));return r.data}
+function chk(r){if(r.error){const e=new Error(traducir(r.error.message||String(r.error)));e.code=r.error.code;throw e}return r.data}
 function traducir(m){
  if(/invalid login credentials/i.test(m))return"Correo o contraseña incorrectos.";
  if(/password should be|weak password/i.test(m))return"La contraseña debe tener al menos 8 caracteres.";
@@ -769,7 +769,10 @@ let P=null;
 function render(){
  const r=$("#root");
  if(V.loading){r.innerHTML=`<div class="splash">${logoHTML(58,18,24)}<div class="spin" style="margin-top:22px"></div></div>`;return}
- if(V.offline){r.innerHTML=`<div class="login" style="text-align:center"><div class="empty"><div class="ei">${ic("wifi",26)}</div><h1 style="font-size:22px;color:var(--ink)">No pudimos conectar</h1><p class="lead">Tu sesión sigue guardada. Revisa tu internet y vuelve a intentar.</p></div><button class="btn block" data-act="retry">Reintentar</button></div>`;return}
+ if(V.offline){const net=!V.errMsg||/conexión|fetch|network|load failed/i.test(V.errMsg);
+  r.innerHTML=`<div class="login" style="text-align:center"><div class="empty"><div class="ei">${ic(net?"wifi":"x",26)}</div><h1 style="font-size:22px;color:var(--ink)">${net?"No pudimos conectar":"No pudimos cargar tus datos"}</h1><p class="lead">${net?"Tu sesión sigue guardada. Revisa tu internet y vuelve a intentar.":"Mándale una captura de esta pantalla a quien administra la app."}</p>
+  ${V.errMsg?`<p class="small" style="margin-top:12px;background:#F8FAFC;border:1px solid var(--line);border-radius:10px;padding:10px;color:#334155;word-break:break-word">Detalle: ${esc(V.errMsg)}</p>`:""}
+  <p class="small muted" style="margin-top:8px">Versión 12-nov</p></div><button class="btn block" data-act="retry">Reintentar</button><button class="btn line block" style="margin-top:10px" data-act="forcelogout">Cerrar sesión</button></div>`;return}
  if(!S.user){r.innerHTML=loginView();return}
  if(P){r.innerHTML=playerView();return}
  if(V.pwd){r.innerHTML=header()+`<main>${pwdView()}</main>`;return}
@@ -1191,6 +1194,7 @@ document.addEventListener("click",e=>{
  const a=b.dataset.act,v=b.dataset.v,id=b.dataset.id;
  switch(a){
  case"retry":boot();break;
+ case"forcelogout":(async()=>{try{await sb.auth.signOut({scope:"local"})}catch(e){}S={user:null,role:"profesor",classes:[],subs:[]};V.offline=false;resetLogin();render()})();break;
  case"refresh":run(()=>api.load());break;
  case"role":S.role=v;ME=v==="estudiante"?"s1":"t1";P=null;V.review=null;V.gen=null;V.ci=0;V.newClass=false;go();break;
  case"tab":if(S.role==="profesor"){V.t=v;V.review=null;V.gen=null;V.prac=null}else{V.s=v;V.flip=false}go();break;
@@ -1329,7 +1333,7 @@ async function boot(){
   await api.init();
   if(!DEMO&&S.needProfile){L.step=3;L.email=S.email;try{L.role=(await api.loginType(S.email))==="contrasena"?"profesor":"estudiante"}catch(e){L.role="estudiante"}}
   if(!DEMO)sb.auth.onAuthStateChange((ev)=>{if(ev==="SIGNED_OUT"&&S.user){S.user=null;render()}});
- }catch(e){console.error(e);if(!DEMO){V.loading=false;V.offline=true;render();return}}
+ }catch(e){console.error(e);if(!DEMO){V.loading=false;V.offline=true;V.errMsg=traducir(e?.message||String(e))+(e?.code?` (${e.code})`:"");render();return}}
  V.loading=false;render();
 }
 boot();
