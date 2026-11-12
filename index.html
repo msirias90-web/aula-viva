@@ -583,8 +583,15 @@ const realApi={
  },
  async load(){
   const {data:{session}}=await sb.auth.getSession();
-  if(!session){S={...S,user:null,classes:[],subs:[]};return}
-  ME=session.user.id;S.email=session.user.email;
+  if(!session){S={...S,user:null,needProfile:false,classes:[],subs:[]};return}
+  // Revisa con el servidor que la cuenta todavía exista (una sesión vieja puede ser de una cuenta borrada)
+  const gu=await sb.auth.getUser();
+  if(gu.error||!gu.data?.user){
+   if(gu.error&&(gu.error.status===401||gu.error.status===403||/not exist|invalid|expired|missing/i.test(gu.error.message||""))){
+    await sb.auth.signOut({scope:"local"}).catch(()=>{});S={...S,user:null,needProfile:false,classes:[],subs:[]};return}
+   if(gu.error)throw gu.error;
+  }
+  ME=gu.data.user.id;S.email=gu.data.user.email;
   const pf=chk(await sb.from("perfiles").select("*").eq("id",ME).maybeSingle());
   if(!pf){S.user=null;S.needProfile=true;return}
   S.needProfile=false;S.user={email:S.email,name:pf.nombre};S.role=pf.rol;S.points=pf.puntos;S.streak=pf.racha;S.teacher=pf.nombre;
@@ -614,7 +621,9 @@ const realApi={
  async sendCode(email){chk(await sb.auth.signInWithOtp({email,options:{shouldCreateUser:true}}))},
  async verify(email,token){chk(await sb.auth.verifyOtp({email,token,type:"email"}));await this.load();return{hasProfile:!!S.user}},
  async createProfile({role,name,email,code}){
-  chk(await sb.from("perfiles").insert({id:ME,rol:role,nombre:name,email}));
+  const ins=await sb.from("perfiles").insert({id:ME,rol:role,nombre:name,email});
+  if(ins.error&&/foreign key|perfiles_id_fkey/i.test(ins.error.message)){await sb.auth.signOut({scope:"local"}).catch(()=>{});S.user=null;S.needProfile=false;throw new Error("Tu sesión era de una cuenta que ya no existe. Entra de nuevo con tu correo.")}
+  chk(ins);
   if(role==="estudiante"&&code){try{chk(await sb.rpc("unirse_clase",{p_codigo:code}))}catch(e){await this.load();throw e}}
   await this.load();
  },
@@ -704,7 +713,8 @@ function loginView(){
   <form data-form="profile"><div class="card soft row" style="margin-top:16px"><span class="ico" style="width:36px;height:36px;border-radius:11px;background:#fff;display:grid;place-items:center;color:var(--brand)">${ic(L.role==="profesor"?"book":"star")}</span><div><b>Entras como ${L.role==="profesor"?"profesor":"estudiante"}</b><div class="small muted">${esc(L.email||S.email||"")}</div></div></div>
   <label class="lb" for="nm">Tu nombre</label><input class="f" id="nm" autocomplete="name" placeholder="Ej: María Rodríguez" value="${esc(L.name)}">
   ${L.role==="estudiante"?`<label class="lb" for="cc">Código de la clase</label><input class="f" id="cc" placeholder="Ej: A1-7K2Q" value="${esc(L.code||(DEMO?"A1-7K2Q":""))}" style="text-transform:uppercase" autocapitalize="characters"><p class="hint">Te lo da tu profesor. Puedes dejarlo para después.</p>`:""}
-  <div class="err">${esc(L.err)}</div><button class="btn block" type="submit" ${dis}>${L.busy?"Guardando…":"Empezar"}</button></form>`;
+  <div class="err">${esc(L.err)}</div><button class="btn block" type="submit" ${dis}>${L.busy?"Guardando…":"Empezar"}</button></form>
+  <button class="link" style="margin-top:12px" data-act="logout">Salir y usar otro correo</button>`;
  return`<div class="login"><div class="logo">A</div>${body}</div>`;
 }
 
@@ -1147,7 +1157,10 @@ document.addEventListener("submit",async e=>{
   const code=L.role==="estudiante"?($("#cc").value||"").trim().toUpperCase():"";L.code=code;
   L.err="";L.busy=true;render();
   try{await api.createProfile({role:L.role,name:nm,email:L.email||S.email,code});resetLogin();V.ci=0;go();toast("¡Bienvenido, "+nm.split(" ")[0]+"!")}
-  catch(err){L.err=traducir(err.message);L.busy=false;if(S.user){resetLogin();go();toast(L.err||traducir(err.message))}else render()}}
+  catch(err){const m=traducir(err.message);L.busy=false;
+   if(S.user){resetLogin();go();toast(m)}
+   else if(!DEMO&&/ya no existe/.test(m)){const em=L.email;resetLogin();L.email=em;L.err=m;render()}
+   else{L.err=m;render()}}}
  if(f==="newclass"){const n=$("#cn").value.trim(),s=$("#cs").value.trim();if(n.length<2){toast("Escribe el nombre de la clase");return}
   run(async()=>{const i=await api.createClass(n,s);V.ci=i<0?0:i;V.newClass=false;V.t="alumnos";lsSet("aula-viva-ci",V.ci)},"Clase creada. Comparte el código con tus estudiantes")}
  if(f==="join"){const c=$("#jc").value.trim().toUpperCase();if(c.length<4){toast("Escribe el código de la clase");return}
