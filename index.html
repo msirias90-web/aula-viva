@@ -276,7 +276,7 @@ const CONFIG={
 };
 const IA=!!CONFIG.IA_AUTOMATICA;
 // Solo en modo demo: quiénes entran como profesor (en la versión real lo decide la tabla profesores_autorizados)
-const DEMO_PROFES=["msirias90@gmail.com","criscc_95@hotmail.com"];
+const DEMO_PROFES=["criscc_95@hotmail.com"];
 // Nombre y logo de la app (se cargan de la tabla "ajustes"; se guarda una copia para que no parpadee)
 let BRAND=Object.assign({name:"Aula Viva",logo:""},(()=>{try{return JSON.parse(localStorage.getItem("aula-viva-brand"))||{}}catch(e){return{}}})());
 function setBrand(b){BRAND={name:b.name||"Aula Viva",logo:b.logo||""};try{localStorage.setItem("aula-viva-brand",JSON.stringify(BRAND))}catch(e){}applyBrand()}
@@ -702,7 +702,7 @@ const realApi={
    const ids=S.classes.flatMap(c=>c.practices.map(p=>p.id));
    S.subs=ids.length?chk(await sb.from("entregas").select("*").in("practica_id",ids).order("creado",{ascending:false})).map(mapSub):[];
   }else{
-   const ins=chk(await sb.from("inscripciones").select("clase_id,hasta,desde,creado,clases(id,nombre,horario,codigo,perfiles(nombre))").eq("estudiante_id",ME).order("creado"));
+   const ins=chk(await sb.from("inscripciones").select("clase_id,hasta,desde,creado,clases(id,nombre,horario,codigo,perfiles!clases_profesor_id_fkey(nombre))").eq("estudiante_id",ME).order("creado"));
    const [tm,pr,en]=await Promise.all([sb.from("temas").select("*"),sb.rpc("practicas_estudiante"),
     sb.from("entregas").select("id,practica_id,estudiante_id,estado,nota,comentario,correctas,automaticas,creado").eq("estudiante_id",ME).order("creado",{ascending:false})]);
    const temas=chk(tm),prs=chk(pr);
